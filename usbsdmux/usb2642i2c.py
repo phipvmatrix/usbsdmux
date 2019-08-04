@@ -2,7 +2,7 @@
 
 import ctypes
 import fcntl
-from .ctypehelper import string_to_microchip_unicode_uint8_array,\
+from ctypehelper import string_to_microchip_unicode_uint8_array,\
   string_to_uint8_array, list_to_uint8_array, to_pretty_hex
 import platform
 
@@ -332,7 +332,7 @@ class Usb2642I2C(object):
 
     # SCSI Command was found on the USB-Bus.
     # Since most of the bytes are unknown this is used as plain magic.
-    scsiCommand = list_to_uint8_array([0xCF, 0x54, 0x04, 0x00, 0x00, 0x00, 0x00,\
+    scsiCommand = list_to_uint8_array([0xCF, 0x54, 0x04, 0x80, 0x00, 0x00, 0x00,\
                                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\
                                        0x00, 0x00, 0x00], 16)
 
@@ -357,6 +357,80 @@ class Usb2642I2C(object):
 
     # Perform the actual SCSI transfer
     self._call_IOCTL(scsiCommand, self._SG_DXFER_TO_DEV, payload)
+
+  def read_config(self, block):
+    """
+    Read the eeprom contents from data of the config EEPROM on the auxiliary
+    I2C bus in 64 Byte blocks.
+
+    block -- choose the block to read from EEPROM. Each block is 64 Byte long.
+             block numbers 0 to 5 for the configuration. However the blocks 6 and 7
+             can be read as well.
+    """
+   
+    data_lst = [0x00] * 384
+    data = list_to_uint8_array(data_lst, 384)
+    
+    # SCSI Command was found on the USB-Bus.
+    # Since most of the bytes are unknown this is used as plain magic.
+    if block == 0:
+        scsiCommand = list_to_uint8_array([0xCF, 0x54, 0x03, 0x00, 0x40, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00], 16)
+    elif block == 1:
+        scsiCommand = list_to_uint8_array([0xCF, 0x54, 0x03, 0x40, 0x40, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00], 16)
+    elif block == 2:
+        scsiCommand = list_to_uint8_array([0xCF, 0x54, 0x03, 0x80, 0x40, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00], 16)            
+    elif block == 3:
+        scsiCommand = list_to_uint8_array([0xCF, 0x54, 0x03, 0xC0, 0x40, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00], 16)
+    elif block == 4:
+        scsiCommand = list_to_uint8_array([0xCF, 0x54, 0x03, 0x00, 0x40, 0x80, 0x00,\
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00], 16)
+    elif block == 5:
+        scsiCommand = list_to_uint8_array([0xCF, 0x54, 0x03, 0x40, 0x40, 0x80, 0x00,\
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00], 16)
+    elif block == 6:
+        scsiCommand = list_to_uint8_array([0xCF, 0x54, 0x03, 0x80, 0x40, 0x80, 0x00,\
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00], 16)
+    elif block == 7:
+        scsiCommand = list_to_uint8_array([0xCF, 0x54, 0x03, 0xC0, 0x40, 0x80, 0x00,\
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,\
+                                           0x00, 0x00, 0x00], 16)
+    else:
+        pass
+                            
+    # First looked like the data block was prefixed with some magic.
+    # But at a second look this was not the case. Setting the length of this
+    # field to 0 bytes prevents any padding.
+    data_prefix = list_to_uint8_array([], 0)
+
+    # Data in the captured USB-transfer was suffixed with some random data.
+    # Experiments showed that 0x00 works fine too.
+    # Since the buffer is zero-ed when initialized the suffix could be removed.
+    data_suffix = list_to_uint8_array([0x00], 127)
+
+    # Copying prefix, data and suffix to the SCSI command data-section
+    payload = (ctypes.c_uint8*512)()
+    for i in range(ctypes.sizeof(data_prefix)):
+      payload[i] = data_prefix[i]
+    for i in range(ctypes.sizeof(data)):
+      payload[i+ctypes.sizeof(data_prefix)] = data[i]
+    for i in range(ctypes.sizeof(data_suffix)):
+      payload[i+ctypes.sizeof(data_prefix)+ctypes.sizeof(data)] = data_suffix[i]
+
+    # Perform the actual SCSI transfer
+    databuffer, sense, sgio = self._call_IOCTL(scsiCommand, self._SG_DXFER_FROM_DEV, payload)
+    temp_buf = [x for x in databuffer]
+    return temp_buf[1:65]
 
 
   def write_read_to(self, i2cAddr, writeData, readLength):
